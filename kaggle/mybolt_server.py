@@ -1,4 +1,4 @@
-import subprocess, time, os
+import subprocess, time, re as _re
 
 def run(cmd):
     r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
@@ -20,15 +20,46 @@ run("rm -rf bolt_diy")
 run("git clone --depth 1 https://github.com/stackblitz-labs/bolt.diy.git bolt_diy 2>&1 | tail -3")
 print("Cloned!")
 
-# ── [3/6] Patch vite.config.ts for tunnel ────────────────
+# ── [3/6] Patch vite.config.ts (Python regex, not sed) ───
 print("\n=== [3/6] Patch vite.config.ts ===")
-run("cd bolt_diy && sed -i 's/server: {/server: { allowedHosts: true,/' vite.config.ts 2>/dev/null || true")
+_cfg = "bolt_diy/vite.config.ts"
+with open(_cfg) as _f:
+    _src = _f.read()
+
+if "allowedHosts" not in _src:
+    # Insert right after the opening of the server block (any whitespace format)
+    _patched = _re.sub(
+        r'(server\s*:\s*\{)',
+        r'\1\n    allowedHosts: true,',
+        _src, count=1
+    )
+    if _patched == _src:
+        # No server block at all — inject one at the top of defineConfig
+        _patched = _re.sub(
+            r'(defineConfig\s*\(\s*\{)',
+            r'\1\n  server: { allowedHosts: true },',
+            _src, count=1
+        )
+    with open(_cfg, "w") as _f:
+        _f.write(_patched)
+    print("Patched — allowedHosts: true injected")
+else:
+    # Already present but could be false/array — force to true
+    _patched = _re.sub(r'allowedHosts\s*:[^,\n}]+', 'allowedHosts: true', _src)
+    with open(_cfg, "w") as _f:
+        _f.write(_patched)
+    print("Patched — allowedHosts forced to true")
+
+_check = subprocess.check_output(
+    "grep -n 'allowedHosts' bolt_diy/vite.config.ts", shell=True
+).decode().strip()
+print("Verified:", _check)
+
 with open("bolt_diy/.env.local", "w") as f:
     f.write("VITE_LOG_LEVEL=debug\n")
-print("Patched — allowedHosts: true")
 
 # ── [4/6] Install dependencies ───────────────────────────
-print("\n=== [4/6] pnpm install (takes 2-4 min) ===")
+print("\n=== [4/6] pnpm install (2-4 min) ===")
 run("cd bolt_diy && pnpm install 2>&1 | tail -5")
 print("Dependencies ready!")
 
